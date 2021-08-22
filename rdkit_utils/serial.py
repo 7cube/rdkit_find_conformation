@@ -153,10 +153,12 @@ class MolReader(MolIO):
         Compute 2D coordinates when reading SMILES. If molecules are written to
         SDF without 2D coordinates, stereochemistry information will be lost.
     """
+    # J. Liu 2021.0823: 
+    #     -  move the 'salt warning' to the 'salt' part. 
+    #        in most cases, there are no salts to remove. 
+    #        it is annoying to throw warning for every jobs
     def __init__(self, f=None, mol_format=None, remove_hydrogens=False,
                  remove_salts=True, compute_2d_coords=True):
-        if not remove_hydrogens and remove_salts:
-            warnings.warn('Compounds with salts will have hydrogens removed')
         super(MolReader, self).__init__(f, mol_format)
         self.remove_hydrogens = remove_hydrogens
         self.remove_salts = remove_salts
@@ -424,6 +426,9 @@ class MolReader(MolIO):
             # only keep if it is valid (# the molecule may _be_ a salt) and has
             # actually been changed
             if new.GetNumAtoms() and mol_no_h.ToBinary() != new.ToBinary():
+                # J. Liu 2021.0823 : the 'salt warning' is moved here
+                if not self.remove_hydrogens :
+                    warnings.warn('Compounds with salts will have hydrogens removed')
                 mol = new
         return mol
 
