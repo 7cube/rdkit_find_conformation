@@ -6,7 +6,8 @@ __author__ = "Steven Kearnes"
 __copyright__ = "Copyright 2014, Stanford University"
 __license__ = "3-clause BSD"
 
-import cPickle
+# J. Liu 2021.0822: cPickle has changed to pickle in python 3.5 and above
+import pickle as cPickle
 import gzip
 import numpy as np
 import os
@@ -66,7 +67,7 @@ class MolIO(object):
         """
         self.close()
 
-    def open(self, filename, mol_format=None, mode='rb'):
+    def open(self, filename, mol_format=None, mode='r'):
         """
         Open a file for reading or writing.
 
@@ -78,7 +79,8 @@ class MolIO(object):
             Molecule file format. Currently supports 'sdf', 'smi', and
             'pkl'. If not provided, the format is inferred from the
             filename.
-        mode : str, optional (default 'rb')
+        # J. Liu 2021.0822: change the default mode from rb to r
+        mode : str, optional (default 'r')
             Mode used to open file.
         """
         self.filename = filename
@@ -123,6 +125,9 @@ class MolIO(object):
             mol_format = 'smi'
         elif filename.endswith('.pkl'):
             mol_format = 'pkl'
+        # J. Liu 2021.0822: add support of reading mol2 file
+        elif filename.endswith('.mol2'):
+            mol_format = 'mol2'
         else:
             raise NotImplementedError('Unrecognized file format.')
         return mol_format
@@ -217,18 +222,27 @@ class MolReader(MolIO):
             mols = self._get_mols_from_smiles()
         elif self.mol_format == 'pkl':
             mols = self._get_mols_from_pickle()
+        # J. Liu 2021.0822: add support of reading mol2 file
+        elif self.mol_format == 'mol2':
+            mols = self._get_mols_from_mol2()
         else:
             raise NotImplementedError('Unrecognized molecule format ' +
                                       '"{}"'.format(self.mol_format))
 
         # skip read errors
+        # J. Liu 2021.0822: 
+        #    - generator.next() has been changed to __next__() in python3
+        #    - add verbose on molId if reading error occurs
+        molId = 0
         while True:
             try:
-                mol = mols.next()
+                molId += 1
+                mol = next(mols)
             except StopIteration:
                 break
             except Exception:
-                warnings.warn('Skipping molecule.')
+                msg = 'Error occurs when reading molecule ' + '"{}".. '.format(molId)
+                warnings.warn(msg + 'Skipping molecule.')
                 continue
             else:
                 if mol is not None:
@@ -290,6 +304,39 @@ class MolReader(MolIO):
                     yield mol
             except EOFError:
                 break
+
+    def _get_mols_from_mol2(self):
+        """
+        J. Liu 2021.0822
+        Read MOL2 molecules from a file-like object.
+        return a rdkit mol supplier
+        slightly revised from https://chem-workflows.com/articles/2019/07/18/building-a-multi-molecule-mol2-reader-for-rdkit/
+        """
+        def get_name(line):
+            if line.startswith("**") :
+                name = self.filename[:-5]
+            else:
+                name = line.strip()
+            return name
+        sanitize=True
+        f = self.f
+        line =f.readline()
+        while not f.tell() == os.fstat(f.fileno()).st_size:
+            if line.startswith("@<TRIPOS>MOLECULE"):
+                mol = []
+                mol.append(line)
+                line = f.readline()
+                name = get_name(line)
+                while not line.startswith("@<TRIPOS>MOLECULE"):
+                    mol.append(line)
+                    line = f.readline()
+                    if f.tell() == os.fstat(f.fileno()).st_size:
+                        mol.append(line)
+                        break
+                block = ",".join(mol).replace(',','')
+                m=Chem.MolFromMol2Block(block,sanitize=sanitize,removeHs=self.remove_hydrogens)
+            m.SetProp('_Name', name)
+            yield m
 
     def are_same_molecule(self, a, b):
         """
