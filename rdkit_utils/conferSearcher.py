@@ -145,6 +145,9 @@ def gen_conformers(nml):
    if nml.convert_input_fileformat :  os.remove(nml.input_filename)
    if nml.convert_output_fileformat : os.remove(nml.output_filename)
     
-if __name__ == '__main__' :
+def main():
    nml = parse_options()
    gen_conformers(nml)
+
+if __name__ == '__main__' :
+   main()
