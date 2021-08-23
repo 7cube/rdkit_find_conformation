@@ -10,6 +10,8 @@ import numpy as np
 
 from rdkit import Chem
 from rdkit.Chem import AllChem
+# J.Liu 2021.0822 : import TDF module
+from rdkit.Chem import TorsionFingerprints
 
 
 class ConformerGenerator(object):
@@ -47,14 +49,34 @@ class ConformerGenerator(object):
         minimization, increasing the size of the pool increases the chance
         of identifying max_conformers unique conformers.
     """
+    # J.Liu 2021.0822: 
+    #     -  add verbose to print more information when debugging
+    #             * verbose = 0 : don't verbose
+    #                         1 : verbose when certain tasks begin
+    #                         2 : print out some data
+    #     -  add 'addH' flag to optionally add hydrogens
+    #     -  add bestRMSD flag to optionally choose rmsd methods
+    #             * True : each conformer pair align each other and find the best rmsd, very slow
+    #             * False: every conformers align to the first one if useTFD=False. very fast
+    #     -  add useTFD flag to calculate TFD instead of RMSD. 
+    #             * torsion fingerprint deviation. no need to align
+    #             * https://pubs.acs.org/doi/full/10.1021/ci2002318
     def __init__(self, max_conformers=1, rmsd_threshold=0.5, force_field='uff',
-                 pool_multiplier=10):
+                 pool_multiplier=10,
+                 addH=False, bestRMSD=False, useTFD=True,verbose=0):
         self.max_conformers = max_conformers
         if rmsd_threshold is None or rmsd_threshold < 0:
             rmsd_threshold = -1.
         self.rmsd_threshold = rmsd_threshold
         self.force_field = force_field
+
         self.pool_multiplier = pool_multiplier
+        self.verbose = verbose
+        self.addH = addH
+        self.bestRMSD = bestRMSD
+        self.useTFD = useTFD
+        if useTFD and rmsd_threshold == 0.5 :
+           self.rmsd_threshold = 0.02  # it is 0.2 in TFD paper
 
     def __call__(self, mol):
         """
@@ -81,6 +103,7 @@ class ConformerGenerator(object):
         """
 
         # initial embedding
+        if self.verbose > 0 : print('Generating conformations ..')
         mol = self.embed_molecule(mol)
         if not mol.GetNumConformers():
             msg = 'No conformers generated for molecule'
@@ -92,7 +115,9 @@ class ConformerGenerator(object):
             raise RuntimeError(msg)
 
         # minimization and pruning
+        if self.verbose > 0 : print('Minimizing conformations ..')
         self.minimize_conformers(mol)
+        if self.verbose > 0 : print('Pruning conformations ..')
         mol = self.prune_conformers(mol)
 
         return mol
@@ -106,9 +131,22 @@ class ConformerGenerator(object):
         mol : RDKit Mol
             Molecule.
         """
-        mol = Chem.AddHs(mol)  # add hydrogens
+        # J. Liu 2021.0822 : 
+        #       - set ETKDGv3 for the support of macrocycle molecules
+        #       - activate pruneRmsThresh to remove highly similar conformations
+        params = AllChem.ETKDGv3()
+        params.useBasicKnowledge = True
+        params.useExpTorsionAnglePrefs = True
+        params.useMacrocycleTorsions = True
+        params.useSmallRingTorsions = True
+        params.enforceChirality = True
+        params.numThreads = 0
+        params.pruneRmsThresh = 0.2
+        params.maxIterations = 1000
+
+        if self.addH : mol = Chem.AddHs(mol)  # add hydrogens
         n_confs = self.max_conformers * self.pool_multiplier
-        AllChem.EmbedMultipleConfs(mol, numConfs=n_confs, pruneRmsThresh=-1.)
+        AllChem.EmbedMultipleConfs(mol, numConfs=n_confs, params=params)
         return mol
 
     def get_molecule_force_field(self, mol, conf_id=None, **kwargs):
@@ -190,8 +228,16 @@ class ConformerGenerator(object):
         """
         if self.rmsd_threshold < 0 or mol.GetNumConformers() <= 1:
             return mol
+        if self.verbose > 0 : print("calculating energies ..")
         energies = self.get_conformer_energies(mol)
-        rmsd = self.get_conformer_rmsd(mol)
+
+        if self.verbose > 0 : print("calculating rmsd ..")
+        if self.bestRMSD :
+             rmsd = self.get_conformer_rmsd(mol)
+        elif self.useTFD :
+             rmsd = self.get_rmsd_matrix(mol,'TFD')
+        else:
+             rmsd = self.get_rmsd_matrix(mol,'RMSD')
 
         sort = np.argsort(energies)  # sort by increasing energy
         keep = []  # always keep lowest-energy conformer
@@ -217,15 +263,47 @@ class ConformerGenerator(object):
             else:
                 discard.append(i)
 
+        if self.verbose > 1 : 
+            import pandas as pd
+            rmsd_df = pd.DataFrame(rmsd)
+            print("energies are:\n",energies)
+            print("rmsd matrix is\n", rmsd_df)
+            print("energies id after sorting", sort)
+            print("retained confs :", keep)
+            print("total confs retained :", len(keep))
         # create a new molecule to hold the chosen conformers
         # this ensures proper conformer IDs and energy-based ordering
         new = Chem.Mol(mol)
         new.RemoveAllConformers()
         conf_ids = [conf.GetId() for conf in mol.GetConformers()]
-        for i in keep:
+        for idx,i in enumerate(keep):
             conf = mol.GetConformer(conf_ids[i])
             new.AddConformer(conf, assignId=True)
+        self.align_conformers(new)
         return new
+
+    def align_conformers(self, mol):
+        rmslist = []
+        AllChem.AlignMolConformers(mol, RMSlist=rmslist)
+        if self.verbose > 1 :
+           print("Align the final conformers and their rmsd are: ", rmslist)
+        return 
+
+    def get_rmsd_matrix(self, mol, mode="TFD"):
+        if mode == "TFD":
+                dmat = TorsionFingerprints.GetTFDMatrix(mol)
+        else:
+                dmat = AllChem.GetConformerRMSMatrix(mol, prealigned=False)
+        N = mol.GetNumConformers()
+        rmsd = np.zeros((N,N))
+        idx = 0
+        for j in range(N):
+            for i in range(N):
+                if i >= j: continue
+                rmsd[i,j] = dmat[idx]
+                rmsd[j,i] = rmsd[i,j]
+                idx += 1
+        return rmsd
 
     @staticmethod
     def get_conformer_rmsd(mol):
