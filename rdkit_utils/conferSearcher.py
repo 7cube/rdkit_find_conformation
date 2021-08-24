@@ -8,7 +8,7 @@ import sys, os
 import conformers, serial
 
 class input_params(object):
-      def __init__(self, input_filename, output_filename, nconf, useTFD, rms, tfd, addH, bestRMSD, verbose):
+      def __init__(self, input_filename, output_filename, nconf, useTFD, rms, tfd, addH, bestRMSD, ncpu, verbose):
          self.input_filename = input_filename
          self.output_filename = output_filename
          self.nconf = nconf
@@ -17,6 +17,7 @@ class input_params(object):
          self.tfd = tfd
          self.addH = (addH == 1)
          self.bestRMSD = (bestRMSD==1)
+         self.ncpu = ncpu
          self.verbose = verbose
          self.convert_input_fileformat = False
          self.convert_output_fileformat = False
@@ -60,7 +61,7 @@ def parse_options () :
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument('-input', required=True,help="input molecule file. Required.")
     parser.add_argument('-output', help="output.")
-    parser.add_argument('-nconf', default=1000, type=int, help="Maximum conformermations that will be generated. Default=1000. Optional.")
+    parser.add_argument('-nconf', default=1000, type=int, help="Maximum conformermations that will be generated. Default=1000.")
     parser.add_argument('-useTFD', default=1, type=int, help="1: use, 0: don't use. Default=1")
     parser.add_argument('-rms', default=0.5, type=float, help="RMSD threshold for identical conformers. Default=0.5")
     parser.add_argument('-tfd', default=0.02, type=float, help="TFD threshold for identical conformers. Default=0.02")
@@ -71,6 +72,7 @@ def parse_options () :
     arghelp +="if useTFD=False, the rmsds are calculated with aligning all conformers to the first one only. Fast."
     parser.add_argument('-bestRMSD', default=0, type=int, help=arghelp)
 
+    parser.add_argument('-ncpu', default=0, type=int, help="the number of cpu. 0 is to use all available cpu. Default=0.")
     parser.add_argument('-verbose', default=0, type=int, help="printing more information. 0 : don't verbose, 1 : verbose when certain tasks begin, 2 : print out some data")
 
 
@@ -91,6 +93,7 @@ def parse_options () :
                         parser.parse_args().tfd,
                         parser.parse_args().addH,
                         parser.parse_args().bestRMSD,
+                        parser.parse_args().ncpu,
                         parser.parse_args().verbose
     )
     return (nml)
@@ -129,6 +132,7 @@ def gen_conformers(nml):
           addH            = nml.addH,
           bestRMSD        = nml.bestRMSD,
           useTFD          = nml.useTFD,
+          ncpu            = nml.ncpu,
           verbose         = nml.verbose
    )
 
