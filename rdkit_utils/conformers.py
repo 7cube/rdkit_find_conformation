@@ -61,9 +61,13 @@ class ConformerGenerator(object):
     #     -  add useTFD flag to calculate TFD instead of RMSD. 
     #             * torsion fingerprint deviation. no need to align
     #             * https://pubs.acs.org/doi/full/10.1021/ci2002318
+    #     -  add ncpu for multithread support. 
+    #             * 0 : use all available CPU. 
+    #             * other values: number of CPU 
+    #     -  add energies to store optimized energies
     def __init__(self, max_conformers=1, rmsd_threshold=0.5, force_field='uff',
                  pool_multiplier=10,
-                 addH=False, bestRMSD=False, useTFD=True,verbose=0):
+                 addH=False, bestRMSD=False, useTFD=True, ncpu=0, verbose=0):
         self.max_conformers = max_conformers
         if rmsd_threshold is None or rmsd_threshold < 0:
             rmsd_threshold = -1.
@@ -75,6 +79,8 @@ class ConformerGenerator(object):
         self.addH = addH
         self.bestRMSD = bestRMSD
         self.useTFD = useTFD
+        self.ncpu = ncpu
+        self.energies = None
         if useTFD and rmsd_threshold == 0.5 :
            self.rmsd_threshold = 0.02  # it is 0.2 in TFD paper
 
@@ -140,7 +146,7 @@ class ConformerGenerator(object):
         params.useMacrocycleTorsions = True
         params.useSmallRingTorsions = True
         params.enforceChirality = True
-        params.numThreads = 0
+        params.numThreads = self.ncpu
         params.pruneRmsThresh = 0.2
         params.maxIterations = 1000
 
@@ -185,9 +191,15 @@ class ConformerGenerator(object):
         mol : RDKit Mol
             Molecule.
         """
-        for conf in mol.GetConformers():
-            ff = self.get_molecule_force_field(mol, conf_id=conf.GetId())
-            ff.Minimize()
+        # J. Liu 2021.0824: 
+        #    - Switch to use MMFFOptimizeMoleculeConfs. 
+        #    - It is equivalent to Minimize() but support multithread at C++ level
+    #   for conf in mol.GetConformers():
+    #       ff = self.get_molecule_force_field(mol, conf_id=conf.GetId())
+    #       ff.Minimize()
+        result = AllChem.MMFFOptimizeMoleculeConfs(mol, numThreads=self.ncpu)
+        result = np.array(result, dtype=float)
+        self.energies = result[:,1]
 
     def get_conformer_energies(self, mol):
         """
@@ -228,10 +240,11 @@ class ConformerGenerator(object):
         """
         if self.rmsd_threshold < 0 or mol.GetNumConformers() <= 1:
             return mol
-        if self.verbose > 0 : print("calculating energies ..")
-        energies = self.get_conformer_energies(mol)
+      # if self.verbose > 0 : print("calculating energies ..")
+      # energies = self.get_conformer_energies(mol)
+        energies = self.energies
 
-        if self.verbose > 0 : print("calculating rmsd ..")
+        if self.verbose > 0 : print(" - calculating rmsd ..")
         if self.bestRMSD :
              rmsd = self.get_conformer_rmsd(mol)
         elif self.useTFD :
@@ -267,7 +280,10 @@ class ConformerGenerator(object):
             import pandas as pd
             rmsd_df = pd.DataFrame(rmsd)
             print("energies are:\n",energies)
-            print("rmsd matrix is\n", rmsd_df)
+            if self.useTFD :
+              print("tfd matrix is\n", rmsd_df)
+            else:
+              print("rmsd matrix is\n", rmsd_df)
             print("energies id after sorting", sort)
             print("retained confs :", keep)
             print("total confs retained :", len(keep))
