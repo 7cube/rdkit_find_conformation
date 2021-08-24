@@ -1,52 +1,15 @@
 rdkit-utils [![Build Status](https://travis-ci.org/skearnes/rdkit-utils.svg?branch=master)](https://travis-ci.org/skearnes/rdkit-utils)
 ===========
 
-Cheminformatics utilities based on the [RDKit](http://www.rdkit.org/)
+This is a forked version from [skearnes/rdkit-utils](https://github.com/skearnes/rdkit-utils)
 
-Highlights
+Changelogs
 ----------
+### 2021.0824
+ - adapt the code for working under python 3
+ - add support of mol2 reading supplier
+ - set ETKDGv3 as the default engine to support macrocycle molecules
+ - update ConformerGenerator with TFD and multithread support
+ - add a standlone program for conformation enumeration. 
+    In addition to the smi,sdf,pkl file formats, others fileformats supported by openbabel are also enabled.
 
-### High-level molecule reading and writing
-Read and write multiple molecule file formats using the same interface. The `MolReader` class automatically __perceives conformers__ and can optionally __remove salts__.
-
-```python
-from rdkit_utils.serial import MolReader, MolWriter
-
-# read a gzipped SDF file
-reader = MolReader()
-with reader.open('molecules.sdf.gz') as mols:
-    for mol in mols:
-        ...
-
-# read SMILES
-reader = MolReader()
-with reader.open('molecules.smi') as mols:
-    for mol in mols:
-        ...
-        
-# read from a file-like object
-with open('molecules.sdf') as f:
-    for mol in MolReader(f, mol_format='sdf'):
-        ...
-
-# write to gzipped SDF
-writer = MolWriter()
-with writer.open('molecules.sdf.gz') as f:
-    f.write(mols)
-```
-
-### Conformer generation
-Generate conformers with minimization _prior_ to pruning. The `ConformerGenerator` class starts with a pool of conformers and prunes out conformers within an RMSD threshold.
-
-```python
-from rdkit_utils import conformers, serial
-
-reader = serial.MolReader()
-mols = reader.open('molecules.sdf')
-
-engine = conformers.ConformerGenerator(max_conformers=10)
-expanded = []
-for mol in mols:
-    expanded.append(engine.generate_conformers(mol))
-    ...
-```
